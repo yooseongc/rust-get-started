@@ -444,8 +444,138 @@ The first purpose is similar to the second but in reverse: if you want to add a 
 
 ##### Fully Qualified Syntax for Disambiguation: Calling Methods with the Same Name
 
+Nothing in Rust prevents a trait from having a method with the same name as another trait's method, or does Rust prevent you from implementing both traits on one type. It's also possible to implement a method directly on the type with the same name as methods from traits.
+
+When calling methods with the same name, you'll need to tell Rust which one you want to use. Consider the code below where we've defined two traits, `Pilot` and `Wizard`, that both have a method called `fly`. We then implement both traits on a type `Human` that already has a method named `fly` implemented on it. 
+
+```rust
+trait Pilot {
+    fn fly(&self);
+}
+
+trait Wizard {
+    fn fly(&self);
+}
+
+struct Human;
+
+impl Pilot for Human {
+    fn fly(&self) {
+        println!("This is your captain speaking.");
+    }
+}
+
+impl Wizard for Human {
+    fn fly(&self) {
+        println!("Up!");
+    }
+}
+
+impl Human {
+    fn fly(&self) {
+        println!("*waving arms furiously*");
+    }
+}
+
+fn main() {
+    let person = Human;
+    Pilot::fly(&person);  // This is your captain speaking.
+    Wizard::fly(&person); // Up!
+    Human::fly(&person);  // *waving arms furiously*
+    person.fly();         // *waving arms furiously*
+}
+```
+
+Because the `fly` method takes a `self` parameter, if we had two *types* that both implement one *trait*, Rust could figure out which implementation of a trait to use based on the type of `self`.
+
+However, associated functions that are not methods don't have a `self` parameter. When there are multiple types or traits that define non-method functions with the same function name, Rust doesn't always know which type you mean unless you use *fully qualified syntax*. 
+
+```rust
+trait Animal {
+    fn baby_name() -> String;
+}
+
+struct Dog;
+
+impl Dog {
+    fn baby_name() -> String {
+        String::from("Spot")
+    }
+}
+
+impl Animal for Dog {
+    fn baby_name() -> String {
+        String::from("puppy")
+    }
+}
+
+fn main() {
+    println!("A baby dog is called a {}", Dog::baby_name());              // A baby dog is called a Spot
+    println!("A baby dog is called a {}", <Dog as Animal>::baby_name());  // A baby dog is called a puppy
+}
+```
+
+To disambiguate and tell Rust that we want to use the implementation of `Animal` for `Dog` as opposed to the implementation of `Animal` for some other type, we need to use fully qualified syntax.
+
+We’re providing Rust with a type annotation within the angle brackets, which indicates we want to call the `baby_name` method from the `Animal` trait as implemented on `Dog` by saying that we want to treat the `Dog` type as an `Animal` for this function call.
+
+In general, fully qualified syntax is defined as follows:
+```rust
+<Type as Trait>::function(receiver_if_method, next_arg, ...);
+```
+
+For associated functions that aren’t methods, there would not be a `receiver`: there would only be the list of other arguments. You could use *fully qualified syntax* everywhere that you call functions or methods. However, you’re allowed to omit any part of this syntax that Rust can figure out from other information in the program. You only need to use this more verbose syntax in cases where there are multiple implementations that use the same name and Rust needs help to identify which implementation you want to call.
+
 
 ##### Using Supertraits to Require One Trait's Functionality Within Another Trait
+
+Sometimes, you might write a trait definition that depends on another trait: for a type to implement the first trait, you want to require that type to also implement the second trait. You would do this so that your trait definition can make use of the associated items of the second trait. The trait your trait definition is relying on is called a *supertrait* of your trait.
+
+```rust
+use std::fmt
+
+trait OutlinePrint: fmt::Display {
+    fn outline_print(&self) {
+        let output = self.to_string(); // to_string() automatically implemented for any type that implements Display
+        let len = output.len();
+
+        println!("{}", "*".repeat(len + 4));
+        println!("*{}*", " ".repeat(len + 2));
+        println!("* {output} *");
+        println!("*{}*", " ".repeat(len + 2));
+        println!("{}", "*".repeat(len + 4));
+    }
+}
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+impl fmt::Display for Point {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "({}, {})", self.x, self.y)
+    }
+}
+
+impl OutlinePrint for Point {}
+
+fn main() {
+    let p = Point { x: 1, y: 3 };
+    p.outline_print();
+}
+```
+Implementing the `OutlinePrint` trait on `Point` will compile successfully, and we can call `outline_print` on a `Point` instance to display it within an outline of asterisks.
+
+
+result should be,
+```
+**********
+*        *
+* (1, 3) *
+*        *
+**********
+```
 
 
 ##### Using the Newtype Pattern to Implement External Traits on External Types
@@ -472,3 +602,364 @@ fn main() {
 The implementation of `Display` uses `self.0` to access the inner `Vec<T>`, because `Wrapper` is a tuple struct and `Vec<T>` is the item at index 0 in the tuple. Then we can use the functionality of the `Display` trait on `Wrapper`.
 
 The downside of using this technique is that `Wrapper` is a new type, so it doesn’t have the methods of the value it’s holding. We would have to implement all the methods of `Vec<T>` directly on `Wrapper` such that the methods delegate to `self.0`, which would allow us to treat `Wrapper` exactly like a `Vec<T>`. If we wanted the new type to have every method the inner type has, implementing the `Deref` trait on the `Wrapper` to return the inner type would be a solution. If we don’t want the `Wrapper` type to have all the methods of the inner type—for example, to restrict the `Wrapper` type’s behavior—we would have to implement just the methods we do want manually.
+
+
+
+#### Advanced Types
+
+##### Using the Newtype Pattern for Type Safety and Abstraction
+
+The newtype pattern is also useful for tasks beyond those we've discussed so far, including statically enforcing that values are never confused and indicating the units of a value. You saw an example of using newtypes to indicate units: recall that the `Millimeters` and `Meters` structs wrapped `u32` values in a newtype. If we wrote function with a parameter of type `Millimeters`, we couldn't compile a program that accidentally tried to call that function with a value of type `Meters` or a plain `u32`.
+
+We can also use the newtype pattern to abstract away from implementation details of a type: the new type can expose a public API that is different from the API of the private inner type.
+
+Newtypes can also hide internal implementations. For example, we could provide a `People` type to wrap a `HashMap<i32, String>` that stores a person's ID associated with their name. Code using `People` would only interact with the public API we provide, such as a method to add a name string to the `People` collection; that code wouldn't need to know that we assign an `i32` ID to names internally. The newtype pattern is a lightweight way to achieve encapsulation to hide implementation details.
+
+
+##### Creating Type Synonyms with Type Aliases
+
+Rust provides the ability to declare a *type alias* to give an existing type another name. For this we use the `type` keyword. 
+
+```rust
+type Kilometers = i32;
+
+fn main() {
+    let x: i32 = 5;
+    let y: Kilometers = 5;
+    println!("x + y = {}", x + y);
+}
+```
+
+The  main use case for type synonyms is to reduce repetition. 
+
+```rust
+type Trunk = Box<dyn Fn() + Send + 'static>;
+
+fn takes_long_type(f: Trunk) {
+    // --snip--
+}
+
+fn returns_long_type() -> Trunk {
+    // --snip--
+}
+
+fn main() {
+    let f: Trunk = Box::new(|| println!("hi"));
+}
+```
+
+Choosing a meaningful name for a type alias can help communicate your intent as well (*trunk* is a word for code to be evaluated at a later time, so it's an appropriate name for a closure that gets stored).
+
+Type aliases are also commonly used with the `Result<T, E>` type for reducing repetition. 
+
+```rust
+use std::{fmt, io::Error};
+
+type Result<T> = std::result::Result<T, std::io::Error>;
+
+pub trait Wirte {
+    fn write(&mut self, buf: &[u8]) -> Result<usize>;
+    fn flush(&mut self) -> Result<()>;
+
+    fn write_all(&mut self, buf: &[u8]) -> Result<()>;
+    fn write_fmt(&mut self, fmt: fmt::Arguments) -> Result<()>;
+}
+```
+
+The type alias helps in two ways: it makes code easier to write *and* it gives us a consistent interface across all of `std::io`. Because it's an alias, it's just another `Result<T, E>`, which means we can use any methods that work on `Result<T, E>` with it, as well as special syntax like the `?` operator.
+
+
+##### The Never Type that Never Returns
+
+Rust has a special type named `!` that's known in type theory lingo as the `empty type` because it has no values. We prefer to call it the *never type* because it stands in the place of the return type when a function will never return.
+
+```rust
+fn bar() -> ! {
+    // --snip--
+    panic!();
+}
+```
+
+This code is read as "the function `bar` returns never." Functions that return never are called *diverging functions*. We can't create values of the type `!` so `bar` can never possibly return.
+
+
+##### Dynamically Sized Types and the Sized Trait
+
+Rust needs to know certian details about its types, such as how much space to allocate for a value of a particular type. This leaves one corner of its type system a little confusing at first: the concept of *dynamically sized types*. Sometimes referred to as *DSTs* or *unsized types*, these types let us write code using values whose size we can know only at runtime.
+
+Let's dig into the details of a dynamically sized type called `str`, which we've been using throughout the book. That's right, not `&str`, but `str` on its own, is a DST. We can't know how long the string is until runtime, meaning we can't create a variable of type `str`, nor can we take an argument of type `str`. 
+
+Rust needs to know how much memory to allocate for any value of a a particular type, and all values of a type must use the same amount of memory.
+
+Recall from the String Slices section that the slice data structure jsut stores the starting position and the length of the slice. So although a `&T` is a single value that stores the memory address of where the `T` is located, a `&str` is *two* values: the address of the `str` and its length. As such, we can know the size of a `&str` value at compile time: it's twice the length of a `usize`. That is, we always know the size of a `&str`, no matter how long the string it refers to is. In general, this is the way in which dynamically sized types are used in Rust: they have an extra bit of metadata that stores the size of the dynamic information. The golden rule of dynamically sized types is that we must always put values of dynamically sized types behind a pointer of some kind.
+
+We can combine `str` with all kinds of pointers: for example, `Box<str>` or `Rc<str>`. In fact, you've seen this before but with a different dynamically sized type: traits. Every trait is a dynamically sized type we can refer to by using the name of the trait. We mentioned already that to use traits as trait objects, we must put them behind a pointer, such as `&dyn Trait` or `Box<dyn Trait>` (`Rc<dyn Trait>` would work too).
+
+To work with DST's Rust provides the `Sized` trait to determine whether or not a type's size is known at compile time. This trait is automatically implemented for everything whose size is known at compile time. In addition, Rust implicitly adds a bound on `Sized` to every generic function. That is, a generic function definition like this:
+```rust
+fn generic<T>(t: T) {
+    // --snip--
+}
+```
+is actually treated as though we had written this:
+```rust
+fn generic<T: Sized>(t: T) {
+    // --snip--
+}
+```
+
+By default, generic functions will work only on types that have a known size at compile time. However, you can use the following special syntax to relax this restriction:
+```rust
+fn generic<T: ?Sized>(t: &T) {
+    // --snip--
+}
+```
+
+A trait bound on `?Sized` means "`T` may or may not be `Sized`" and this notation overrides the default that generic types must have a known size at compile time. The `?Trait` syntax with this meaning is only available for `Sized`, not any other traits.
+
+Also note that we switched the type of the `t` parameter from `T` to `&T`. Because the type might not be `Sized`, we need to use it behind some kind of pointer. In this case, we've chosen a reference.
+
+
+#### Advanced Functions and Closures
+
+##### Function Pointers
+
+You can pass regular functions to functions! This technique is useful when you want to pass a function you've already defined rather than defining a new closure. Functions coerce to the type `fn`(with a lowercase f), not to be confused with the `Fn` closure trait. The `fn` type is called a *function pointer*. Passing functions with function pointers will allow you to use functions as arguments to other functions.
+
+The syntax for specifying that a parameter is a function pointer is similar to that of closures. 
+
+```rust
+fn add_one(x: i32) -> i32 {
+    x + 1
+}
+
+fn do_twice(f: fn(i32) -> i32, arg: i32) -> i32 {
+    f(arg) + f(arg)
+}
+
+fn main() {
+    let answer = do_twice(add_one, 5);
+    println!("The answer is: {answer}");  // 12
+}
+```
+
+Unlike closures, `fn` is a type rather than a trait, so we specify `fn` as the parameter type directly rather than declaring a generic type parameter with one of the `Fn` traits as a trait bound.
+
+Function pointers implement all three of the closure traits(`Fn`, `FnMut`, and `FnOnce`), meaning you can always pass a function pointer as an argument for a function that expects a closure. It's best to write functions using a generic type and one of the closure traits so your functions can accept either functions or closures.
+
+Recall from the "Enum values" section that the name of each enum variant that we define also becomes an initializer function. We can use these initializer functions as function pointers that implement the closure traits, which means we can specify the initializer functions as arguments for methods that take closures, like so:
+```rust
+enum Status {
+    Value(u32),
+    Stop,
+}
+
+fn main() {
+    let list_of_statuses: Vec<Status> = (0u32..20).map(Status::Value).collect();
+}
+```
+
+##### Returning Closure
+
+Closures are represented by traits, which means you can't return closures directly. In most cases where you might want to return a trait, you can instead use  the concrete type that implements the trait as the return value of the function. However, you can't do that with closures because they don't have a concrete type that is returnable; you're not allowed to use the function pointer `fn` as a return type.
+
+```rust
+fn returns_closure() -> dyn Fn(i32) -> i32 {
+    |x| x + 1
+}
+```
+
+```bash
+$ cargo build
+   Compiling functions-example v0.1.0 (file:///projects/functions-example)
+error[E0746]: return type cannot have an unboxed trait object
+ --> src/lib.rs:1:25
+  |
+1 | fn returns_closure() -> dyn Fn(i32) -> i32 {
+  |                         ^^^^^^^^^^^^^^^^^^ doesn't have a size known at compile-time
+  |
+help: consider returning an `impl Trait` instead of a `dyn Trait`
+  |
+1 | fn returns_closure() -> impl Fn(i32) -> i32 {
+  |                         ~~~~
+help: alternatively, box the return type, and wrap all of the returned values in `Box::new`
+  |
+1 ~ fn returns_closure() -> Box<dyn Fn(i32) -> i32> {
+2 ~     Box::new(|x| x + 1)
+  |
+
+For more information about this error, try `rustc --explain E0746`.
+error: could not compile `functions-example` (lib) due to 1 previous error
+```
+
+The error references the `Sized` trait again! Rust doesn't know how much space it will need to store the closure. 
+
+We can use a trait object:
+```rust
+fn returns_closure() -> Box<dyn Fn(i32) -> i32> {
+    Box::new(|x| x + 1)
+}
+```
+This code will compile just fine.
+
+
+#### Macros
+
+We've used macros like `println!` throughout this book, but we haven't fully explore what a macro is and how it works. The term *macro* refers to a family of features in Rust: *delarative* macros with `macro_rules!` and three kinds of *procedural* macros:
+ * Custom `#[derive]` macros that specify code added with the `derive` attribute used on structs and enums
+ * Attribute-like macros that define custom attributes usable on any item
+ * Function-like macros that look like function calls but operate on the tokens specified as their argument
+
+We'll talk about each of these in turn, but first, let's look at  why we even need macros when we already have functions.
+
+##### The Difference Between Macros and Functions
+
+Fundamentally, macros are a way of writing code that writes other code, which is known as *metaprogramming*. In Appendix C, we discuss the `derive` attribute, which generates an implementation of various traits for you. We've also used the `println!` and `vec!` macros throughout the book. All of these macros *expand* to produce more code than the code you've written manually.
+
+Metaprogramming is useful for reducing the amount of code you have to write and maintain, which is also one of the roles of functions. However, macros have some additional powers that function don't.
+
+A function signature must declare the number and type of parameters the function has. Macros, on the other hand, can take a variable number of parameters: we can call `println!("hello")` with one argument or `println!("hello {}", name)` with two arguments. Also, macros are expanded before the compiler interprets the meaning of the code, so a macro can, for example, implement a trait on a given type. A function can't, because it gets called at runtime and a trait needs to be implemented at compile time.
+
+The downside to implementing a macro instead of a function is that macro definitions are more complex than function definitions because you're writing Rust code that writes Rust code. Due to this indirection, macro definitions are generally more difficult to read, understand, and maintain than function definitions.
+
+Another important difference between macros and functions is that you must define macros or bring them into scope *before* you call them in a file, as opposed to functions you can define anywhere and call anywhere.
+
+
+##### Declarative Macros with `macro_rules!` for General Metaprogramming
+
+The most widely used form of macros in Rust is the *declarative macro*. These are also sometimes referred to as "macros by example," "`macro_rules!` macros," or just plain "macros." At their core, declarative macros allow you to write something similar to a Rust `match` expression. `match` expressions are control structures that take an expression, compare the resulting value of the expression to patterns, and then run the code associated with the matching pattern. Macros also compare a value to patterns that are associated with particular code: in this situation, the value is the literal Rust source code passed to the macro; the patterns are compared with the structure of that source code; and the code associated with each pattern, when matched, replaces the code passed to the macro. This all happens during compilation.
+
+To define a macro, you use the `macro_rules!` construct. Let's explore how to use `macro_rules!` by looking at how the `vec!` macro is defined. 
+
+For example, the following macro creates a new vector containing three integers:
+```rust
+let v: Vec<u32> = vec![1, 2, 3];
+```
+We could also use the `vec!` macro to make a vector of two integers or a vector of five string slices. We wouldn't be able to use a function to do the same because we wouldn't know the number of type of values up front.
+
+
+```rust
+#[macro_export]
+macro_rules! vec {
+    ( $( $x:expr ),* ) => {
+        {
+            let mut temp_vec = Vec::new();
+            $(
+                temp_vec.push($x);
+            )*
+            temp_vec
+        }
+    };
+}
+```
+
+The `#[macro_export]` annotation indicates that this macro should be made available whenever the crate in which the macro is defined is brought into scope. Without this annotation, the macro can't be brought into scope.
+
+We then start the macro definition with `macro_rules!` and the name of macro we're defining *without* the exclamation mark. The name, in this case `vec`, is followed by curly brakets denoting the body of the macro definition.
+
+The structure in the `vec!` body is similar to the structure of a `match` expression. Here we have one arm with the pattern `( $( $x:expr ),* )`, followed by `=>` and the block of code associated with this pattern. If the pattern matches, the associated block of code will be emitted. Given that this is the only pattern in this macro, there is only one valid way to match; any other pattern will result in an error. More complex macros will have more than one arm.
+
+Valid pattern syntax in macro definitions is different than the pattern syntax covered before because macro patterns are matched against Rust code structure rather than values. 
+
+First, we use a set of parentheses to encompass the whole pattern. We use a dollar sign (`$`) to declare a variable in the macro system that will contain the Rust code matching the pattern. The dollar sign makes it clear this is a macro variable as opposed to a regular Rust variable. Next comes a set of parentheses that captures values that match the pattern within the parentheses for use in the replacement code. Within `$()` is `$x:expr`, which matches any Rust expression and gives the expression the name `$x`.
+
+The comma following `$()` indicates that a literal comma separator charactor could optionally appear after the code that matches the code in `$()`. The `*` specifies that the patten matches zero or more of whatever precedes the `*`.
+
+When we call this macro with `vec![1, 2, 3];`, the `$x` pattern matches three times with the three expressions `1`, `2`, and `3`.
+
+Now let's look at the pattern in the body of the code associated with this arm: `temp_vec.push()` within `$()*` is generated for each part that matches `$()` in the pattern zero or more times depending on how many times the pattern matches. The `$x` is replaced with each expression matched. When we call this macro with `vec![1, 2, 3];`, the code generated that replaces this macro call will be the following:
+```rust
+{
+    let mut temp_vec = Vec::new();
+    temp_vec.push(1);
+    temp_vec.push(2);
+    temp_vec.push(3);
+    temp_vec
+}
+```
+
+We've defined a macro that can take any number of arguments of any type and can generate code to create a vector containing the specified elements.
+
+
+##### Procedural Macros for Generating Code from Attributes
+
+The second form of macros is the *procedural macro*, which acts more like a function (and is a type of procedure). Procedural macros accept some code as an input, operate on that code, and produce some code as an output rather than matching against patterns and replacing the code with other code as declarative macros do. The three kinds of procedural macros are custom derive, attribute-like, and function-like, and all work in a similar fashion.
+
+When creating procedural macros, the definitions must reside in their own crate with a special crate type. This is for complex technical reasons that we hope to eliminate in the future. 
+
+```
+use proc_macro;
+
+#[some_attribute]
+pub fn some_name(input: TokenStream) -> TokenStream {
+
+}
+```
+
+The function that defines a procedural macro takes a `TokenStream` as an input and produces a `TokenStream` as an output. The `TokenStream` type is defined by the `proc_macro` crate that is included with Rust and represents a sequence of tokens. This is the core of the macro: the source code that the macro is operating on makes up the input `TokenStream`, and the coe the macro produces is the output `TokenStream`. The function also has an attribute attached to it that specifies which kind of procedural macro we're creating. We can have multiple kinds of procedural macros in the same crate.
+
+
+##### How to Write a Custom derive Macro
+
+Let's create a crate named `hello_macro` that defines a trait named `HelloMacro` with one associated function named `hello_macro`. Rather than making our users implement the `HelloMacro` trait for each of their types, we'll provide a procedural macro so users can annotate their type with `#[derive(HelloMacro)]` to get a default implementation of the `hello_macro` function. The default implementation will print `Hello, Macro! My name is TypeName!` where `TypeName` is  the name of the type on which this trait has been defined.
+
+```rust
+// usage example : 'pancakes` crate  
+use hello_macro::HelloMacro;
+use hello_macro_derive::HelloMacro;
+
+#[derive(HelloMacro)]
+struct Pancakes;
+
+fn main() {
+    Pancakes::hello_macro();
+}
+```
+
+The implementation of the `HelloMacro` trait from the procedural macro was included without the `pancakes` crate needing to implement it; the `#[derive(HelloMacro)]` added the trait implementation.
+
+
+##### Attribute-like macros
+
+Attribute-like macros are similar to custom derive macros, but instead of generating code for the `derive` attribute, they allow you to create new attributes. They're also more flexible: `derive` only works for structs and enums; attributes can be applied to other items as well, such as functions.
+
+Here's an example of using an attribute-like macro:
+```rust
+#[route(GET, "/")]
+fn index() {
+    
+}
+```
+
+This `#[route]` attribute would be defined by the framework as a procedural macro. The signature of the macro definition function would look like this:
+```rust
+#[proc_macro_attribute]
+pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
+
+}
+```
+
+Here, we have two parameters of type `TokenStream`. The first is for the contents of the attribute: the `GET, "/"` part. The second is the body of the item the attribute is attached to: in this case, `fn index() {}` and the rest of the function's body.
+
+Other than that, attribute-like macros work the same way as custom derive macros: you create a crate with the `proc-macro` crate type and implement a function that generates the code you want!
+
+
+##### Function-like macros
+
+Function-like macros define macros that look like function calls. Similarly to `macro_rules!` macros, they're more flexible than functions; for example, they can take an unknown number of arguments. However, `macro_rules!` macros can be defined only using the match-like syntax. Function-like macros take a `TokenStream` parameter and their definition manipulates that `TokenStream` using Rust code as the other two types of procedural macros do. An example of a function-like macro is an `sql!` macro that might be called like so:
+```rust
+let sql = sql!(SELECT * FROM posts WHERE id=1);
+```
+
+This macro would parse the SQL statement inside it and check that it's syntactically correct, which is much more complex processing than a `macro_rules!` macro can do. The `sql!` macro would be defined like this:
+```rust
+#[proc_macro]
+pub fn sql(input: TokenStream) -> TokenStream {}
+```
+
+This definition is similar to the custom derive macro's signature: we receive the tokens that are inside the parantheses and return the code we wanted to generate.
+
+All Rust compiler versions support any edition that existed prior to that compiler’s release, and they can link crates of any supported editions together. Edition changes only affect the way the compiler initially parses code. Therefore, if you’re using Rust 2015 and one of your dependencies uses Rust 2018, your project will compile and be able to use that dependency. The opposite situation, where your project uses Rust 2018 and a dependency uses Rust 2015, works as well.
+
+To be clear: most features will be available on all editions. Developers using any Rust edition will continue to see improvements as new stable releases are made. However, in some cases, mainly when new keywords are added, some new features might only be available in later editions. You will need to switch editions if you want to take advantage of such features.
+
